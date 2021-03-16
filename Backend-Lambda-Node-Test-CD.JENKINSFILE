@@ -1,0 +1,517 @@
+import groovy.json.JsonSlurperClassic
+
+@NonCPS
+def jsonParse(def json) {
+    new groovy.json.JsonSlurperClassic().parseText(json)
+}
+
+def audit(status,user){
+
+                try {
+
+                               def projetoPath = sh( script: "echo ${JOB_NAME}", returnStdout: true ).trim()
+                               def processo = projetoPath.substring(projetoPath.lastIndexOf("/") + 1, projetoPath.length())
+                               def ambiente = sh(script: "echo ${JOB_NAME} | cut -d / -f 4", returnStdout: true).trim()
+                               def currentDate = sh(returnStdout: true, script: 'date +%Y-%m-%d').trim()
+                               def time = sh(returnStdout: true, script: 'date +%T').trim()
+                               def modulo = sh( script: "echo ${JOB_NAME} | cut -d / -f 3", returnStdout: true ).trim()
+                               def AUDIT_TABLE = "tableName"
+                               def REGION = "awsRegion"
+                               ambiente = ambiente+"||"+time
+                               echo "Usuario: " + user
+                               echo "status: " + status
+                               echo "processo: " + processo
+                               echo "ambiente: " + ambiente
+                               echo "currentDate: " + currentDate
+                               echo "time: " + time
+                               echo "modulo: " + modulo
+                               echo "user: " + user
+                               echo "currentBuild.toString(): " + currentBuild.toString()
+                               def RETORNO_DYNAM = sh( script: "aws dynamodb put-item --table-name ${AUDIT_TABLE} --item '{\"data\":{\"S\":\""+currentDate+"\"}, \"processo\" : {\"S\":\""+processo+"\"}, \"usuario\" : {\"S\":\""+user+"\"}, \"status\" : {\"S\":\""+status+"\"}, \"modulo\" : {\"S\":\""+modulo+"\"}, \"ambiente\" : {\"S\":\""+ambiente+"\"}, \"time\" : {\"S\":\""+time+"\"}}' --region ${REGION}",returnStdout: true).trim()
+
+                } catch(err) {
+                               echo 'Error Auditoria: ' + err
+                }
+}
+
+node {
+
+//Lambda Pipeline
+//This code clones a GIT repository, builds the lambda function, create the appropriated roles, aliases, etc. and deploys it to AWS Lambda using a S3 Bucket as origin.
+
+// CHANGE IF NEEDED
+def AWS_REGION = "us-east-1"
+def ROLE = ""
+def ACCOUNT_NUMBER = ""
+def functionExists = ""
+def DEPLOY_BUCKET = ""
+def PROPERTIES_BUCKET = ""
+def PROPERTIES_FILE = ""
+def ENV_SUFFIX = ""
+def POL_ARN = ""
+def BRANCH = ""
+def ENVIRONMENT = sh(script: "echo ${JOB_NAME} | cut -d / -f 4", returnStdout: true).trim()
+def LAMBDA_FUNCTION = sh(script: "echo ${JOB_NAME} | cut -d / -f 3", returnStdout: true).trim()
+def DOMAIN = sh(script: "echo ${JOB_NAME} | cut -d / -f 2", returnStdout: true).trim()
+def RUNTIME = ""
+def REPO_URL = "placeholder.repo.com.br"
+def DESCRIPTION = "NODEJS_LAMBDA_FUNCTION"
+def HANDLER = "index.handler"
+def TIMEOUT = "15"
+def POLICY_JSON = ""
+def URL_CONFIG = "https://apiURL.com.br"
+def URL_CREDENTIALS = "https://apiURL.com.br/do"
+def LAYER_FUNCTION = "layerName"
+def LAYER_VERSION = ""
+def PREVIOUS_ALIAS = ""
+def DD_API_KEY = ""
+def ECS_CLUSTER = params.CLUSTER_NAME
+def PROJECT_LANG = params.PROJECT_LANG
+def NODE_VERSION = params.NODE_VERSION
+def BUILD_USER = params.BUILD_USER
+def USER_EMAIL = params.USER_EMAIL
+def KMS_KEY_ARN = ""
+def POL_VER_DELETE = ""
+def JENKINS_EMAIL = "jenkins@placeholder.com.br"
+def TESTS = params.TESTS
+def APM = params.APM
+def EMPRESA = "placeholder"
+def BUILD_LINK = env.BUILD_URL
+def PRD_APPROVERS = "jenkins@placeholder.com.br"
+
+if (ENVIRONMENT == "development") {
+                ACCOUNT_NUMBER = "placeholder"
+                ENV_SUFFIX = "dev"
+                BRANCH = "development"
+                DD_API_KEY = "placeholder"
+                DEPLOY_BUCKET = "placeholder"
+                PROPERTIES_BUCKET = "placeholder"
+                PROPERTIES_FILE = "placeholder"
+                POL_ARN = "placeholder"
+                KMS_KEY_ARN = "placeholder"
+            } else if (ENVIRONMENT == "qa") {
+                ACCOUNT_NUMBER = "placeholder"
+                ENV_SUFFIX = "qa"
+                BRANCH = "qa"
+                DD_API_KEY = "placeholder"
+                DEPLOY_BUCKET = "placeholder"
+                PROPERTIES_BUCKET = "placeholder"
+                PROPERTIES_FILE = "placeholder"
+                POL_ARN = "placeholder"
+                KMS_KEY_ARN = "placeholder"
+            } else if (ENVIRONMENT == "homolog") {
+                ACCOUNT_NUMBER = "placeholder"
+                ENV_SUFFIX = "hml"
+                BRANCH = "homolog"
+                DD_API_KEY = "placeholder"
+                DEPLOY_BUCKET = "placeholder"
+                PROPERTIES_BUCKET = "placeholder"
+                PROPERTIES_FILE = "placeholder"
+                POL_ARN = "placeholder"
+                KMS_KEY_ARN = "placeholder"
+            } else if (ENVIRONMENT == "production") {
+                ACCOUNT_NUMBER = "placeholder"
+                ENV_SUFFIX = "prd"
+                BRANCH = "master"
+                DD_API_KEY = "placeholder"
+                DEPLOY_BUCKET = "placeholder"
+                PROPERTIES_BUCKET = "placeholder"
+                PROPERTIES_FILE = "placeholder"
+                POL_ARN = "placeholder"
+                KMS_KEY_ARN = "placeholder"
+            } else {
+                echo "Nao foi possivel obter o ambiente para o deploy"
+            }
+
+            POLICY_JSON = /{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"permissoesPadrao\",\"Effect\":\"Allow\",\"Action\":[\"logs:CreateLogStream\",\"ec2:DeleteNetworkInterface\",\"logs:CreateLogGroup\",\"ec2:CreateNetworkInterface\",\"lambda:GetLayerVersion\",\"ec2:DescribeNetworkInterfaces\",\"logs:PutLogEvents\"],\"Resource\":\"*\"},{\"Sid\":\"lambdaInvoke\",\"Effect\":\"Allow\",\"Action\":[\"lambda:InvokeFunction\"],\"Resource\":\"arn:aws:lambda:${AWS_REGION}:${ACCOUNT_NUMBER}:function:faas-integration-service-internal\"},{\"Sid\":\"snsPublish\",\"Effect\":\"Allow\",\"Action\":\"sns:Publish\",\"Resource\":\"arn:aws:sns:${AWS_REGION}:${ACCOUNT_NUMBER}:notification-queue\"},{\"Sid\":\"dynamoGetItem\",\"Effect\":\"Allow\",\"Action\":[\"dynamodb:GetItem\",\"dynamodb:Query\"],\"Resource\":[\"arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_NUMBER}:table\/customer-key-management\",\"arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_NUMBER}:table\/app-params-management\",\"arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_NUMBER}:table\/application-key-management\",\"arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_NUMBER}:table\/application-params-management\",\"arn:aws:dynamodb:*:*:table\/*\/index\/*\"]},{\"Sid\":\"dynamoPutItem\",\"Effect\":\"Allow\",\"Action\":[\"dynamodb:PutItem\",\"dynamodb:GetItem\",\"dynamodb:Query\",\"dynamodb:UpdateItem\"],\"Resource\":[\"arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_NUMBER}:table\/notification-queue-tracking\",\"arn:aws:dynamodb:*:*:table\/*\/index\/*\"]},{\"Sid\":\"kmsClientKey\",\"Effect\":\"Allow\",\"Action\":[\"kms:Decrypt\",\"kms:Encrypt\"],\"Resource\":[\"${KMS_KEY_ARN}\"]}]}/
+
+
+try {
+
+        if (ENVIRONMENT == "production") {
+                    stage("Aprovação"){
+                        echo "Build Link inicial: ${BUILD_LINK}"
+                        BUILD_LINK = sh(script: "echo ${BUILD_LINK} | sed \'s/.\\{3\\}\$//\'", returnStdout: true).trim()
+                        echo "Build Link final: ${BUILD_LINK}"
+                        emailext (
+                            subject: "Aprovacao - ${EMPRESA} - Ambiente Produtivo - Projeto: '${LAMBDA_FUNCTION}'",
+                            body: """
+        Link do build: ${BUILD_LINK}
+                            """,
+                            to: "${PRD_APPROVERS}",
+                            from: "${JENKINS_EMAIL}"
+                        )
+                        timeout(time: 3000, unit: 'SECONDS') {
+                            approved = input message: 'Prosseguir com criacao?', ok: 'Yes', submitter: 'jenkins_approvers_prd'
+                        }
+                    }
+            } else {
+                echo "Ambiente nao produtivo, sem necessidade de aprovacao"
+            }
+
+        stage("Obteve Credenciais"){
+            //Criou Credenciais
+            sh "curl --request GET --url \'${URL_CREDENTIALS}/create\'"
+            //baixou properties
+            sh """curl --request GET --url \'${URL_CONFIG}?bucket=${PROPERTIES_BUCKET}&fileName=${PROPERTIES_FILE}\' > credentials"""
+            sh "sudo mv ./credentials /var/lib/jenkins/.aws/credentials"
+            sh "sudo chmod 555 /var/lib/jenkins/.aws/credentials"
+        }
+
+        stage("Baixou código do Git"){
+             withCredentials([usernamePassword(credentialsId: 'Jenkins-Gitlab-Credentials', passwordVariable: 'GITLAB_KEY', usernameVariable: 'GITLAB_USER')]) {
+             // the code in here can access $GITLAB_KEY and $GITLAB_USER
+             echo "Branch: ${ENVIRONMENT}"
+             sh "git clone https://\$GITLAB_USER:\$GITLAB_KEY@${REPO_URL}/${EMPRESA}/${DOMAIN}/lambdas/${LAMBDA_FUNCTION}.git -b ${BRANCH} \$PWD"
+             }
+        }
+
+       if (TESTS == "true") {
+
+            stage('Criou Sonar Properties'){
+
+            writeFile file: 'sonar-project.properties',
+                    text: """   sonar.projectKey=${EMPRESA}-${LAMBDA_FUNCTION}-${ENVIRONMENT}
+                                sonar.projectName=${EMPRESA}-${LAMBDA_FUNCTION}-${ENVIRONMENT}
+                                sonar.projectVersion=${BUILD_NUMBER}
+                                sonar.language=js
+                                sonar.profile=Ori-Node
+                                sonar.sourceEncoding=UTF-8
+                                sonar.sources=./
+                                sonar.javascript.lcov.reportPath=coverage/lcov.info """
+                                //sonar.exclusions=*.spec.js
+                                //sonar.test.inclusions=*.spec.js
+            }
+
+            stage('Sonar Scanner') {
+                def scannerHome = tool 'Sonar'
+                    withSonarQubeEnv('Sonar') {
+                        sh "sudo chmod +x ${scannerHome}/bin/sonar-scanner"
+                        sh "${scannerHome}/bin/sonar-scanner"
+                    }
+                    timeout(time: 10, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
+                    }
+            }
+        } else {
+            echo "Sonar scanner não executado."
+        }
+
+        stage("Baixou config"){
+            sh "curl --request GET --url \'${URL_CONFIG}?bucket=${PROPERTIES_BUCKET}&fileName=${LAMBDA_FUNCTION}.json\' > config.json"
+            //Get Layer Version
+            sh "sudo aws lambda list-layer-versions --profile ${ENVIRONMENT} --region ${AWS_REGION} --layer-name ${LAYER_FUNCTION} | grep 'Version\\\":' | head -n 1 | egrep -o '[[:digit:]]{1,999}' > layer.txt"
+            LAYER_VERSION = sh(script: "cat layer.txt", returnStdout: true).trim()
+            echo "${LAYER_VERSION}"
+        }
+
+       if (ENVIRONMENT == "production" || ENVIRONMENT == "homolog" && APM != "false") {
+           stage("Instrumentou"){
+            echo "Realizando instrumentacao"
+                sh "sudo npm install --save dd-trace"
+                sh "sudo sed -i '1 i\\});' index.js"
+                sh "sudo sed -i '1 i\\env: \"${ENV_SUFFIX}\"' index.js"
+                sh "sudo sed -i '1 i\\service: \"${LAMBDA_FUNCTION}\",' index.js"
+                sh "sudo sed -i '1 i\\const tracer = require('\\'dd-trace\\'').init({' index.js"
+                sh "sudo sed -i '1 i\\const { datadog } = require(\"datadog-lambda-js\");' index.js"
+            }
+       }
+       else {
+           echo "Ambiente de desenvolvimento, APM desativado"
+       }
+
+        stage("Empacotou") {
+            echo "Print node: ${NODE_VERSION}"
+            if ( NODE_VERSION == "" || NODE_VERSION == null ) {
+                NODE_VERSION = 14
+            } else if ( NODE_VERSION <= 16 ) {
+                echo "Versao de Node validada"
+            } else {
+                throw new Exception("Versao de NODE nao reconhecida ou suportada")
+            }
+            echo "Versao Node: ${NODE_VERSION}"
+            RUNTIME = "nodejs${NODE_VERSION}.x"
+            sh "sudo n ${NODE_VERSION}"
+            sh "npm install --production"
+            sh "zip -r ${LAMBDA_FUNCTION}.zip ."
+        }
+
+        stage("Enviou ao Codecommit") {
+            echo "Verificando se repositorio existe"
+            def repoExists = (sh (script: "sudo aws codecommit list-repositories --region ${AWS_REGION} | grep \\\"${LAMBDA_FUNCTION}\\\"", returnStatus: true ))
+                    echo "Cod Retorno: ${repoExists}"
+                    if (repoExists > 0 ){
+                        echo "Criando repositorio"
+                        sh "sudo aws codecommit create-repository --region ${AWS_REGION} --repository-name ${LAMBDA_FUNCTION}"
+                    } else {
+                        echo "Repo ja existe, realizando atualizacao"
+                    }
+             echo "Realizando push"
+             def COMMIT = sh(script: "git log --format=format:%s -1", returnStdout: true).trim()
+             sh "sudo git remote set-url --add --push origin ssh://git-codecommit.${AWS_REGION}.amazonaws.com/v1/repos/${LAMBDA_FUNCTION}"
+             sh "sudo git add * -f"
+             sh "sudo git commit -m \"${COMMIT}\""
+             sh "sudo git push -f ssh://git-codecommit.${AWS_REGION}.amazonaws.com/v1/repos/${LAMBDA_FUNCTION} --all"
+        }
+
+        stage("Verifica se funcao já existe"){
+            echo "Verificando se funcao ja existe"
+            functionExists = (sh (script: "sudo aws lambda list-functions --profile ${ENVIRONMENT} --region ${AWS_REGION} | grep ${LAMBDA_FUNCTION}\\\"", returnStatus: true ))
+            echo "Cod Retorno: ${functionExists}"
+        }
+
+        if (functionExists > 0 ){
+
+            try {
+
+                    echo "Verificando se a policy ja existe"
+                    def policyExists = (sh (script: "sudo aws iam list-policies --profile ${ENVIRONMENT} --region ${AWS_REGION} | grep POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}", returnStatus: true ))
+                    echo "Cod Retorno: ${policyExists}"
+                    if (policyExists > 0 ){
+                        echo "Criando policy"
+                        sh "sudo echo ${POLICY_JSON} >> POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json"
+                        sh "sudo aws iam create-policy --profile ${ENVIRONMENT} --region ${AWS_REGION} --policy-name POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX} --policy-document file://POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json"
+                        } else {
+                            echo "Policy ja existe, Realizando Atualização"
+                            sh "sudo echo ${POLICY_JSON} >> POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json"
+                            sh "sudo aws iam create-policy-version --profile ${ENVIRONMENT} --region ${AWS_REGION} --policy-arn arn:aws:iam::${ACCOUNT_NUMBER}:policy/POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX} --policy-document file://POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json --set-as-default"
+                        }
+
+                    stage("Criou Role para a funcao") {
+                         def roleExists = (sh (script: "sudo aws iam list-roles --profile ${ENVIRONMENT} --region ${AWS_REGION} | grep Role-${LAMBDA_FUNCTION}\\\"", returnStatus: true ))
+                         echo "Cod Retorno: ${roleExists}"
+                         if (roleExists > 0 ){
+                                def POLICY_BUCKET = "placeholder"
+                                def STS_FILE = "assume-role-policy-document.json"
+                                // Baixou template de police do s3
+                                sh "sudo aws s3 cp s3://${POLICY_BUCKET}/policy-documents/${STS_FILE} \$PWD"
+                                // Criou a Role e anexou a Politica Padrao para Lambdas de acordo com o dominio
+                                sh "sudo aws iam create-role --profile ${ENVIRONMENT} --region ${AWS_REGION} --role-name Role-${LAMBDA_FUNCTION} --assume-role-policy-document file://${STS_FILE}"
+                                sh "sleep 20"
+                                sh "sudo aws iam attach-role-policy --profile ${ENVIRONMENT} --region ${AWS_REGION} --role-name Role-${LAMBDA_FUNCTION} --policy-arn ${POL_ARN}"
+                                // Atribuiu valor a variavel de Role utilizada na criacao / update do lambda
+                                ROLE = "arn:aws:iam::${ACCOUNT_NUMBER}:role/Role-${LAMBDA_FUNCTION}"
+                                // Aguarda criacao da Role
+                                sleep 30
+                         } else {
+                             echo "Role ja existe, anexando a role existente na lambda"
+                             sh "sudo aws iam attach-role-policy --profile ${ENVIRONMENT} --region ${AWS_REGION} --role-name Role-${LAMBDA_FUNCTION} --policy-arn ${POL_ARN}"
+                             // Atribuiu valor a variavel de Role utilizada na criacao / update do lambda
+                             ROLE = "arn:aws:iam::${ACCOUNT_NUMBER}:role/Role-${LAMBDA_FUNCTION}"
+                             // Aguarda criacao da Role
+                             sleep 30
+                         }
+                    }
+
+                    stage("Publicou") {
+                        // enviou
+                        sh "sudo aws s3 cp ${LAMBDA_FUNCTION}.zip s3://${DEPLOY_BUCKET}/${LAMBDA_FUNCTION} --region ${AWS_REGION} --profile ${ENVIRONMENT}"
+                        // create
+                        sh "sudo aws lambda create-function --profile ${ENVIRONMENT} --function-name ${LAMBDA_FUNCTION} --region ${AWS_REGION} --runtime  ${RUNTIME} --timeout ${TIMEOUT} --role ${ROLE} --environment \"Variables={DD_ENV=${ENVIRONMENT},DD_SERVICE=${LAMBDA_FUNCTION},DD_API_KEY=${DD_API_KEY},DD_FLUSH_TO_LOG=true,DD_TRACE_ENABLED=true}\" --description ${DESCRIPTION} --handler ${HANDLER} --code S3Bucket=\"${DEPLOY_BUCKET}\",S3Key=\"${LAMBDA_FUNCTION}\""
+                        sh "sudo aws lambda update-function-configuration --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --layers arn:aws:lambda:${AWS_REGION}:${ACCOUNT_NUMBER}:layer:${LAYER_FUNCTION}:${LAYER_VERSION}"
+                        //Add Datadog Layer
+                        if (ENVIRONMENT == "production" || ENVIRONMENT == "homolog" && APM != "false" ) {
+                            stage("Adicionou Datadog Layer"){
+                                    sh "sudo aws lambda update-function-configuration --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --layers arn:aws:lambda:${AWS_REGION}:${ACCOUNT_NUMBER}:layer:${LAYER_FUNCTION}:${LAYER_VERSION} arn:aws:lambda:${AWS_REGION}:464622532012:layer:Datadog-Node12-x:41"
+                                    sh "sudo aws lambda tag-resource --profile ${ENVIRONMENT} --region ${AWS_REGION} --resource arn:aws:lambda:${AWS_REGION}:${ACCOUNT_NUMBER}:function:${LAMBDA_FUNCTION} --tags env=${ENV_SUFFIX},service=${LAMBDA_FUNCTION}"
+                            }
+                        }
+                        else {
+                            echo "Ambiente nao produtivo"
+                        }
+                    }
+
+                    stage("Criou Aliases") {
+                        //Cria nova versão
+                        echo "Criando versão ACTIVE"
+                        sh "sudo aws lambda update-function-code --function-name ${LAMBDA_FUNCTION} --region ${AWS_REGION} --profile ${ENVIRONMENT} --s3-bucket ${DEPLOY_BUCKET} --s3-key ${LAMBDA_FUNCTION} --publish"
+                        // Cria Alias ACTIVE
+                        sh "sudo aws lambda create-alias --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --function-version '\$LATEST' --name ACTIVE"
+                        // Cria Alias PREVIOUS
+                        sh "sudo aws lambda list-versions-by-function --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --max-items 1000 | grep 'Version\\\":' | egrep -o '[[:digit:]]{1,999}' | tail -n 2 | head -n 1 > alias.txt"
+                        PREVIOUS_ALIAS = sh(script: "cat alias.txt", returnStdout: true).trim()
+                        sh "sudo aws lambda create-alias --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --function-version ${PREVIOUS_ALIAS} --name PREVIOUS"
+                    }
+
+                } catch (err) {
+
+                        stage("Error") {
+                        currentBuild.result = 'FAILURE'
+                        echo "Error>>> " + err
+                        sh "sudo aws iam detach-role-policy --profile ${ENVIRONMENT} --role-name Role-${LAMBDA_FUNCTION} --policy-arn ${POL_ARN}"
+                        sh "sudo aws iam delete-role --profile ${ENVIRONMENT} --role-name Role-${LAMBDA_FUNCTION}"
+                        sh "sudo aws lambda delete-function --profile ${ENVIRONMENT} --function-name ${LAMBDA_FUNCTION} --region ${AWS_REGION}"
+                    }
+                }
+
+        } else {
+            stage("Atualizou") {
+                stage("Validação de Policy") {
+                    echo "Verificando se a policy ja existe"
+                    def policyExists = (sh (script: "sudo aws iam list-policies --profile ${ENVIRONMENT} --region ${AWS_REGION} | grep POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}", returnStatus: true ))
+                    echo "Cod Retorno: ${policyExists}"
+                    if (policyExists > 0 ){
+                        echo "Criando policy"
+                        sh "sudo echo ${POLICY_JSON} >> POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json"
+                        sh "sudo aws iam create-policy --profile ${ENVIRONMENT} --region ${AWS_REGION} --policy-name POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX} --policy-document file://POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json"
+                        } else {
+                            echo "Policy ja existe, Realizando Atualização"
+                            echo "Removendo versão mais antiga"
+                            def POL_VER_COUNT = sh(script: "sudo aws iam list-policy-versions --profile ${ENVIRONMENT} --region ${AWS_REGION} --policy-arn ${POL_ARN} | grep VersionId | cut -c 27-50 | sed 's/\",//' | wc -l | xargs", returnStdout: true).trim()
+                            echo "Numero de versoes de Politica existentes: ${POL_VER_COUNT}"
+                            if ( POL_VER_COUNT == "5" ) {
+                                POL_VER_DELETE = sh(script: "sudo aws iam list-policy-versions --profile ${ENVIRONMENT} --region ${AWS_REGION} --policy-arn ${POL_ARN} | grep VersionId | tail -1 | cut -c 27-50 | sed 's/\",//'", returnStdout: true).trim()
+                                sh "sudo aws iam delete-policy-version --profile ${ENVIRONMENT} --region ${AWS_REGION} --policy-arn ${POL_ARN} --version-id ${POL_VER_DELETE}"
+                            } else {
+                                echo "Nao sera necessario remover versoes da Politica"
+                            }
+                            sh "sudo echo ${POLICY_JSON} >> POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json"
+                            sh "sudo aws iam create-policy-version --profile ${ENVIRONMENT} --region ${AWS_REGION} --policy-arn arn:aws:iam::${ACCOUNT_NUMBER}:policy/POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX} --policy-document file://POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json --set-as-default"
+                        }
+                }
+            }
+
+                stage("Validação de Role") {
+                    def roleExists = (sh (script: "sudo aws iam list-roles --profile ${ENVIRONMENT} --region ${AWS_REGION} | grep Role-${LAMBDA_FUNCTION}\\\"", returnStatus: true ))
+                    echo "Cod Retorno: ${roleExists}"
+                    if (roleExists > 0 ){
+                        def POLICY_BUCKET = "placeholder"
+                        def STS_FILE = "assume-role-policy-document.json"
+                        // Baixou template de police do s3
+                        sh "sudo aws s3 cp s3://${POLICY_BUCKET}/policy-documents/${STS_FILE} \$PWD"
+                        // Criou a Role e anexou a Policita Padrao para Lambdas de acordo com o dominio
+                        sh "sudo aws iam create-role --profile ${ENVIRONMENT} --region ${AWS_REGION} --role-name Role-${LAMBDA_FUNCTION} --assume-role-policy-document file://${STS_FILE}"
+                        sh "sleep 20"
+                        sh "sudo aws iam attach-role-policy --profile ${ENVIRONMENT} --region ${AWS_REGION} --role-name Role-${LAMBDA_FUNCTION} --policy-arn ${POL_ARN}"
+                        // Atribuiu valor a variavel de Role utilizada na criacao / update do lambda
+                        ROLE = "arn:aws:iam::${ACCOUNT_NUMBER}:role/Role-${LAMBDA_FUNCTION}"
+                        // Aguarda criacao da Role
+                        sleep 30
+                    } else {
+                        echo "Role ja existe, anexando a role existente na lambda"
+                        sh "sudo aws iam attach-role-policy --profile ${ENVIRONMENT} --region ${AWS_REGION} --role-name Role-${LAMBDA_FUNCTION} --policy-arn ${POL_ARN}"
+                        // Atribuiu valor a variavel de Role utilizada na criacao / update do lambda
+                        ROLE = "arn:aws:iam::${ACCOUNT_NUMBER}:role/Role-${LAMBDA_FUNCTION}"
+                    }
+                // enviou
+                sh "sudo aws s3 cp ${LAMBDA_FUNCTION}.zip s3://${DEPLOY_BUCKET}/${LAMBDA_FUNCTION} --region ${AWS_REGION} --profile ${ENVIRONMENT}"
+                // atualiza função
+                sh "sudo aws lambda update-function-code --function-name ${LAMBDA_FUNCTION} --region ${AWS_REGION} --profile ${ENVIRONMENT} --s3-bucket ${DEPLOY_BUCKET} --s3-key ${LAMBDA_FUNCTION} --publish"
+                //atualiza Role
+                sh "sudo aws lambda update-function-configuration --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --role ${ROLE}"
+                //adiciona variaveis
+                sh "sudo aws lambda update-function-configuration --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --environment \"Variables={DD_API_KEY=${DD_API_KEY},DD_FLUSH_TO_LOG=true,DD_TRACE_ENABLED=true}\""
+                //atualiza layer
+                sh "sudo aws lambda update-function-configuration --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --layers arn:aws:lambda:${AWS_REGION}:${ACCOUNT_NUMBER}:layer:${LAYER_FUNCTION}:${LAYER_VERSION}"
+                //Add Datadog Layer
+                    if (ENVIRONMENT == "production" || ENVIRONMENT == "homolog" && APM != "false" ) {
+                        stage("Adicionou Datadog Layer"){
+                            sh "sudo aws lambda update-function-configuration --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --layers arn:aws:lambda:${AWS_REGION}:${ACCOUNT_NUMBER}:layer:${LAYER_FUNCTION}:${LAYER_VERSION} arn:aws:lambda:${AWS_REGION}:464622532012:layer:Datadog-Node12-x:41"
+                            sh "sudo aws lambda tag-resource --profile ${ENVIRONMENT} --region ${AWS_REGION} --resource arn:aws:lambda:${AWS_REGION}:${ACCOUNT_NUMBER}:function:${LAMBDA_FUNCTION} --tags env=${ENV_SUFFIX},service=${LAMBDA_FUNCTION}"
+                        }
+                    }
+                    else {
+                        echo "Ambiente de desenvolvimento, APM desativado"
+                    }
+                //Verifica se alias existe
+                echo "Verificando se os Aliases ja existem"
+                    def aliasExists = (sh (script: "sudo aws lambda list-aliases --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} | grep \\\"ACTIVE", returnStatus: true ))
+                    echo "Cod Retorno: ${aliasExists}"
+                    if (aliasExists > 0 ){
+                        //Cria nova versão
+                        echo "Criando versão ACTIVE"
+                        sh "sudo aws lambda update-function-code --function-name ${LAMBDA_FUNCTION} --region ${AWS_REGION} --profile ${ENVIRONMENT} --s3-bucket ${DEPLOY_BUCKET} --s3-key ${LAMBDA_FUNCTION} --publish"
+                        // Cria Alias ACTIVE
+                        sh "sudo aws lambda create-alias --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --function-version '\$LATEST' --name ACTIVE"
+                        // Cria Alias PREVIOUS
+                        sh "sudo aws lambda list-versions-by-function --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --max-items 1000 | grep 'Version\\\":' | egrep -o '[[:digit:]]{1,999}' | tail -n 2 | head -n 1 > alias.txt"
+                        PREVIOUS_ALIAS = sh(script: "cat alias.txt", returnStdout: true).trim()
+                        sh "sudo aws lambda create-alias --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --function-version ${PREVIOUS_ALIAS} --name PREVIOUS"
+                        } else {
+                            echo "Alias ja existem, prosseguindo atualizaçao"
+                            //atualiza aliases
+                            // Atualiza Alias ACTIVE
+                            sh "sudo aws lambda update-alias --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --function-version '\$LATEST' --name ACTIVE"
+                            // Atualiza Alias PREVIOUS
+                            sh "sudo aws lambda list-versions-by-function --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --max-items 1000 | grep 'Version\\\":' | egrep -o '[[:digit:]]{1,999}' | tail -n 2 | head -n 1 > alias.txt"
+                            PREVIOUS_ALIAS = sh(script: "cat alias.txt", returnStdout: true).trim()
+                            sh "sudo aws lambda update-alias --profile ${ENVIRONMENT} --region ${AWS_REGION} --function-name ${LAMBDA_FUNCTION} --function-version ${PREVIOUS_ALIAS} --name PREVIOUS"
+                        }
+            }
+        }
+
+        stage("Verifica se existe arquivo de politica") {
+            def pol_doc_Exists = (sh (script: "sudo aws s3api list-objects --bucket ${PROPERTIES_BUCKET} --profile ${ENVIRONMENT} --region ${AWS_REGION} | grep POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json", returnStatus: true ))
+                         echo "Cod Retorno: ${pol_doc_Exists}"
+                         if (pol_doc_Exists > 0 ){
+                                //false
+                                echo "Arquivo inexistente, serao mantidas permissoes atuais"
+                         } else {
+                                //true
+                                echo "Baixando arquivo de politica"
+                                sh "curl --request GET --url \'${URL_CONFIG}?bucket=${PROPERTIES_BUCKET}&fileName=POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX}.json\' > policy.json"
+                                echo "Atualizando policy"
+                                sh "sudo aws iam put-role-policy --profile ${ENVIRONMENT} --role-name Role-${LAMBDA_FUNCTION} --policy-name POL-lambda-${LAMBDA_FUNCTION}-${ENV_SUFFIX} --policy-document file://policy.json"
+                         }
+                    }
+
+        stage('Auditoria'){
+            audit('Sucesso', BUILD_USER)
+        }
+
+
+        stage('Notificacao'){
+            emailext (
+                subject: "Jenkins - Job '${LAMBDA_FUNCTION} - ${env.BUILD_NUMBER}'",
+                body: """<p>Build realizada com sucesso. LOG: <a href="${env.BUILD_URL}">${env.JOB_NAME}</a></p>""",
+                to: "${USER_EMAIL}",
+                from: "${JENKINS_EMAIL}"
+            )
+        }
+
+} catch (err) {
+
+	stage("Error") {
+		currentBuild.result = 'FAILURE'
+        audit('Falha', BUILD_USER)
+        echo "Error>>> " + err
+        emailext (
+            subject: "Jenkins - Job '${LAMBDA_FUNCTION} - ${env.BUILD_NUMBER}'",
+            body: """<p>Build Falhada. LOG: <a href="${env.BUILD_URL}">${env.JOB_NAME}</a></p>""",
+            to: "${USER_EMAIL}",
+            from: "${JENKINS_EMAIL}"
+        )
+	}
+}
+finally {
+		stage("Limpeza do pipeline"){
+             sh "ls -a | cut -c 1-2 | sed 1,2d > filelist.txt"
+sh """
+input="filelist.txt"
+while IFS= read -r line
+do
+  sudo rm -rf \$line*
+done < \$input
+"""
+             sh "sudo rm -f *.txt"
+             sh "sudo docker image prune -af"
+            withCredentials([usernamePassword(credentialsId: 'jenkins-api', passwordVariable: 'JENKINS_CREDS', usernameVariable: 'JENKINS_USER')]) {
+                // the code in here can access $JENKINS_CREDS and $JENKINS_USER
+                //Verificou jobs em execucao
+                sh "sudo curl -u \$JENKINS_USER:\$JENKINS_CREDS -o jobs.txt \'http://localhost:8080/computer/api/xml?depth=1&xpath=//url&wrapper=builds\'"
+                def JOB_COUNT = sh(script: "grep -o -i jenkins.placeholder.com.br jobs.txt | wc -l | xargs", returnStdout: true).trim()
+                sh "sudo rm jobs.txt"
+                echo "Jobs rodando: ${JOB_COUNT}"
+                if (JOB_COUNT == "0" || JOB_COUNT == "1") {
+                    echo "Excluindo credenciais"
+                    sh "curl --request GET --url ${URL_CREDENTIALS}/delete"
+                    sh "sudo rm -rf /var/lib/jenkins/.aws/cred*"
+                } else {
+                    echo "Existem outros jobs rodando, credencial permanecera ativa"
+                }
+            }
+        }
+	}
+}
+
+
